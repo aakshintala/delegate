@@ -78,10 +78,9 @@ pub(crate) fn spawn(spec: &JobSpec) -> Spawned {
     let stdout = started.stdout;
     let stderr = started.stderr;
     let mut child = started.child;
-    let spawned_session = launched_session.clone();
     Spawned {
         kill: super::killer(pid, reaped_k),
-        session_id: spawned_session,
+        session_id: launched_session.clone(),
         drive: Box::new(move |on| {
             let mut state = PiState::default();
             let pumped = super::pump(

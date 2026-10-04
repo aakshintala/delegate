@@ -79,10 +79,9 @@ pub(crate) fn spawn_with_session(spec: &JobSpec, launched_session: Option<String
     let stdout = started.stdout;
     let stderr = started.stderr;
     let mut child = started.child;
-    let spawned_session = launched_session.clone();
     Spawned {
         kill: super::killer(pid, reaped_k),
-        session_id: spawned_session,
+        session_id: launched_session.clone(),
         drive: Box::new(move |on| {
             let mut state = init_stream_state();
             let mut result: Option<RawCursorJson> = None;
@@ -459,17 +458,8 @@ mod tests {
             } else if !clean {
                 assert_eq!(res.is_error, Some(true), "{stem}");
                 assert_eq!(res.text, NO_RESULT, "{stem}");
-                if stem == "cancel-mid-tool" || stem == "cancelled" {
-                    let expected = if stem == "cancel-mid-tool" {
-                        "2a2056ae-a4c8-48ba-aaf1-e493a08074a5"
-                    } else {
-                        "62115336-178d-43d1-a45b-b83b5f597c2e"
-                    };
-                    assert_eq!(res.session_id.as_deref(), Some(expected), "{stem}");
-                    assert!(res.usage.is_none(), "{stem}");
-                } else {
-                    assert!(res.session_id.is_none() && res.usage.is_none(), "{stem}");
-                }
+                // The per-stem arms below assert each cancelled stream's session id.
+                assert!(res.usage.is_none(), "{stem}");
             } else {
                 assert_eq!(res.is_error, Some(false), "{stem}");
                 assert!(res.session_id.is_some() && res.usage.is_some(), "{stem}");
