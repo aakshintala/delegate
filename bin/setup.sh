@@ -52,6 +52,17 @@ elif [ ! -f "$NEW_PROFILE" ] && [ -f "$OLD_PROFILE" ]; then
   run rmdir "$CONFIG_HOME/cursor-delegate" 2>/dev/null || true
 fi
 
+# cursor-agent signs commits ("Co-authored-by: Cursor") and PR bodies ("Made with
+# [Cursor]") unless its user config says not to; it has no per-run flag for this.
+CURSOR_CONFIG="$HOME/.cursor/cli-config.json"
+if [ -f "$CURSOR_CONFIG" ]; then
+  if command -v jq >/dev/null 2>&1; then
+    run sh -c 'jq ".attribution = {attributeCommitsToAgent: false, attributePRsToAgent: false}" "$1" > "$1.delegate.tmp" && mv -f "$1.delegate.tmp" "$1"' _ "$CURSOR_CONFIG"
+  else
+    echo "WARNING: jq not found; set attribution.attributeCommitsToAgent and attributePRsToAgent to false in $CURSOR_CONFIG" >&2
+  fi
+fi
+
 # Both harnesses load the skill from this checkout, so an edit is live
 # without a reinstall. A plugin install would copy the whole checkout,
 # untracked files included, into Claude's plugin cache.
