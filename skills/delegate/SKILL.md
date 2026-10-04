@@ -58,8 +58,8 @@ feeds a runner, the gate runs the runner. A gate that greps for a file is not a 
 `delegate resume <id>` takes the new prompt on stdin and prints the new job id. `--model` must
 stay on the same backend. It adds `supersededBy` to the old record. A `CANCELLED`, `STALLED` or
 `ERROR` record with a session id can be resumed; it exits 2 for a `RUNNING` job or a record with
-no session id. Cursor was verified to resume a session killed mid-tool. Answer `NEEDS_CONTEXT`
-with it.
+no session id. Cursor, pi and claude were verified (2026-10-04) to resume a session cancelled
+mid-turn. Answer `NEEDS_CONTEXT` with it.
 
 `--tool-idle-ms` widens how long a running tool may stay silent before the idle watchdog
 kills the job (default 1800000, 30 min; a model silent between tools gets 300000). It also
