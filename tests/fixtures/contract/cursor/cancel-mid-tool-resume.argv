@@ -1,0 +1,1 @@
+cursor-agent --print --output-format stream-json --trust --approve-mcps --force --model composer-2.5 --workspace /var/folders/dq/_c83wftd34g281_1002c_gl00000gn/T//rec53 --sandbox disabled --resume 2a2056ae-a4c8-48ba-aaf1-e493a08074a5 
