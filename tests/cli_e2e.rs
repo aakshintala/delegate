@@ -188,7 +188,10 @@ fn run_returns_id_while_job_runs_then_it_finishes() {
     assert_eq!(r["status"], "RUNNING");
     assert_eq!(r["resume"]["model"], "composer-2.5");
     assert!(r["resume"].get("capability").is_none(), "{r}");
-    assert_eq!(r["resume"]["sessionId"], Value::Null);
+    // The SLOW fake prints its init line at once; the record picks up the id as soon as it arrives.
+    until("session id in record", || {
+        e.record(&id)["resume"]["sessionId"] == "s-init"
+    });
     let pid = r["supervisorPid"].as_i64().unwrap();
     assert!(alive(pid), "supervisor must outlive `run`");
     e.release();
