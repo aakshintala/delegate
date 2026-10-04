@@ -1,0 +1,11 @@
+{"type":"system","subtype":"init","apiKeySource":"login","cwd":"/private/var/folders/dq/_c83wftd34g281_1002c_gl00000gn/T/rec53","session_id":"2a2056ae-a4c8-48ba-aaf1-e493a08074a5","model":"Composer 2.5","permissionMode":"default"}
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"You were interrupted. What single word were you going to reply with? Reply with only that word.\n\nEnd your final message with a single trailing line that is exactly one of: STATUS: DONE, STATUS: DONE_WITH_CONCERNS, STATUS: BLOCKED, STATUS: NEEDS_CONTEXT, or STATUS: ERROR. When you need an answer from the orchestrator before you can proceed, put your question in the message body and end with STATUS: NEEDS_CONTEXT."}]},"session_id":"2a2056ae-a4c8-48ba-aaf1-e493a08074a5"}
+{"type":"thinking","subtype":"delta","text":"The user is asking what","session_id":"2a2056ae-a4c8-48ba-aaf1-e493a08074a5","timestamp_ms":1791152821874}
+{"type":"thinking","subtype":"delta","text":" single word I was going","session_id":"2a2056ae-a4c8-48ba-aaf1-e493a08074a5","timestamp_ms":1791152821882}
+{"type":"thinking","subtype":"delta","text":" to reply with after","session_id":"2a2056ae-a4c8-48ba-aaf1-e493a08074a5","timestamp_ms":1791152821882}
+{"type":"thinking","subtype":"delta","text":" the sleep 40 command","session_id":"2a2056ae-a4c8-48ba-aaf1-e493a08074a5","timestamp_ms":1791152821883}
+{"type":"thinking","subtype":"delta","text":" finished.","session_id":"2a2056ae-a4c8-48ba-aaf1-e493a08074a5","timestamp_ms":1791152821883}
+{"type":"thinking","subtype":"delta","text":"\n\nThe single word was BANANA.","session_id":"2a2056ae-a4c8-48ba-aaf1-e493a08074a5","timestamp_ms":1791152821883}
+{"type":"thinking","subtype":"completed","session_id":"2a2056ae-a4c8-48ba-aaf1-e493a08074a5","timestamp_ms":1791152821883}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"BANANA\n\nSTATUS: DONE"}]},"session_id":"2a2056ae-a4c8-48ba-aaf1-e493a08074a5"}
+{"type":"result","subtype":"success","duration_ms":2987,"duration_api_ms":2987,"is_error":false,"result":"BANANA\n\nSTATUS: DONE","session_id":"2a2056ae-a4c8-48ba-aaf1-e493a08074a5","request_id":"50f60ba3-9edc-417c-a23f-a4cca5cfbf8c","usage":{"inputTokens":272,"outputTokens":72,"cacheReadTokens":12369,"cacheWriteTokens":0}}

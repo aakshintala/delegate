@@ -163,6 +163,7 @@ fn cancel_then_resume_reuses_the_launch_session() {
     until("agent.pid", || e.dir.join("agent.pid").exists());
     assert_eq!(e.record(&id)["status"], "RUNNING");
     let sid = argv_flag(&e.argv_text(), "--session-id");
+    assert_eq!(e.record(&id)["resume"]["sessionId"], sid.as_str());
     let out = e.delegate(&["cancel", &id], None);
     assert_eq!(
         out.status.code(),

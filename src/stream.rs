@@ -34,6 +34,7 @@ pub struct StreamState {
     pub last_assistant: Option<String>,
     pub files_touched: Vec<String>,
     pub phase: Option<String>,
+    pub session_id: Option<String>,
 }
 
 pub fn init_stream_state() -> StreamState {
@@ -154,11 +155,19 @@ pub fn parse_line(line: &str, state: &mut StreamState) -> ParsedLine {
             };
         }
     };
+    let mut changed = false;
+    if state.session_id.is_none()
+        && let Some(session_id) = ev.get("session_id").and_then(Value::as_str)
+    {
+        state.session_id = Some(session_id.to_string());
+        changed = true;
+    }
+
     let ty = match ev.get("type").and_then(|t| t.as_str()) {
         Some(t) => t,
         None => {
             return ParsedLine {
-                changed: false,
+                changed,
                 result: None,
                 assistant_text: None,
             };
@@ -169,13 +178,12 @@ pub fn parse_line(line: &str, state: &mut StreamState) -> ParsedLine {
     // rate_limit_event carry no progress. Skip them before the usage peek.
     if ty == "system" || ty == "rate_limit_event" {
         return ParsedLine {
-            changed: false,
+            changed,
             result: None,
             assistant_text: None,
         };
     }
 
-    let mut changed = false;
     let assistant_text = if ty == "assistant" {
         extract_assistant_text(ev.get("message"))
     } else {
@@ -250,6 +258,26 @@ pub fn parse_line(line: &str, state: &mut StreamState) -> ParsedLine {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn records_the_first_session_id_even_on_a_system_event() {
+        let fixture = include_str!("../tests/fixtures/contract/cursor/cancel-mid-tool.stdout");
+        let mut state = init_stream_state();
+        let mut lines = fixture.lines();
+        let first = lines.next().unwrap();
+        assert!(parse_line(first, &mut state).changed);
+        assert_eq!(
+            state.session_id.as_deref(),
+            Some("2a2056ae-a4c8-48ba-aaf1-e493a08074a5")
+        );
+        for line in lines {
+            parse_line(line, &mut state);
+        }
+        assert_eq!(
+            state.session_id.as_deref(),
+            Some("2a2056ae-a4c8-48ba-aaf1-e493a08074a5")
+        );
+    }
 
     #[test]
     fn ignores_blank_and_non_json() {

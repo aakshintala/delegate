@@ -180,6 +180,10 @@ fn pi_run_stays_running_until_released() {
     let e = Env::new("slow");
     let id = e.run_write("SLOW do it");
     until("RUNNING", || e.record(&id)["status"] == "RUNNING");
+    until("argv", || e.dir.join("argv.txt").exists());
+    let argv = e.argv();
+    let sid = argv.windows(2).find(|w| w[0] == "--session-id").unwrap()[1].clone();
+    assert_eq!(e.record(&id)["resume"]["sessionId"], sid.as_str());
     e.release();
     let done = e.wait_terminal(&id);
     assert_eq!(done["status"], "DONE");

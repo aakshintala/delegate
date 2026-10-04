@@ -24,7 +24,7 @@ const USAGE: &str =
     "usage: delegate run --model M [--cwd D] [--gate CMD] [--tool-idle-ms N] [--prompt-file F]
        delegate resume <jobId> [--model M] [--gate CMD] [--prompt-file F | stdin]
        delegate cancel <jobId>
-       delegate watch <jobId>... [--timeout S]
+       delegate watch <jobId>... [--timeout S]  (exit 1: timed out; jobs still RUNNING)
        delegate models
        delegate doctor";
 
@@ -585,7 +585,9 @@ fn supervise(args: &[String]) -> i32 {
     rd.status_writer = Arc::new(CliRecordWriter {
         job_id: id.clone(),
         model: model.clone(),
+        backend: Some(resolved.backend.clone()),
         cwd: cwd.clone(),
+        last_session_id: std::sync::Mutex::new(None),
         gate: gate.clone(),
         tool_idle_ms,
         resumed_from: resumed_from.clone(),
@@ -661,7 +663,8 @@ fn watch(args: &[String]) -> Result<i32, Usage> {
     if ids.is_empty() {
         return usage(USAGE);
     }
-    let timeout = match flag(&kv, "--timeout") {
+    let timeout_arg = flag(&kv, "--timeout");
+    let timeout = match timeout_arg {
         None => None,
         Some(s) => match s.parse::<f64>() {
             Ok(t) if t >= 0.0 => Some(Duration::from_secs_f64(t)),
@@ -692,6 +695,30 @@ fn watch(args: &[String]) -> Result<i32, Usage> {
         if all_done || timed_out {
             for r in recs.iter().flatten() {
                 println!("{r}");
+            }
+            if timed_out {
+                let elapsed = format!("{}s", timeout_arg.expect("timeout elapsed without timeout"));
+                for (id, record) in ids.iter().zip(&recs) {
+                    let Some(record) = record.as_ref().filter(|r| r["status"] == "RUNNING") else {
+                        continue;
+                    };
+                    let progress = &record["progress"];
+                    let mut details = Vec::new();
+                    if let Some(phase) = progress["phase"].as_str() {
+                        details.push(format!("phase {phase}"));
+                    }
+                    if let Some(tool) = progress["lastTool"].as_str() {
+                        details.push(format!("last tool {tool}"));
+                    }
+                    let details = if details.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" ({})", details.join(", "))
+                    };
+                    eprintln!(
+                        "delegate watch: timed out after {elapsed}; {id} still RUNNING{details}; see its progress field; run watch again"
+                    );
+                }
             }
             return Ok(if all_done { 0 } else { 1 });
         }
