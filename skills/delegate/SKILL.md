@@ -56,8 +56,10 @@ feeds a runner, the gate runs the runner. A gate that greps for a file is not a 
 `result.gateResult` in the record, and rerun the check yourself when `passed` is false.
 
 `delegate resume <id>` takes the new prompt on stdin and prints the new job id. `--model` must
-stay on the same backend. It adds `supersededBy` to the old record, and exits 2 on a `RUNNING`
-job or a record with no session id (a `CANCELLED` one). Answer `NEEDS_CONTEXT` with it.
+stay on the same backend. It adds `supersededBy` to the old record. A `CANCELLED`, `STALLED` or
+`ERROR` record with a session id can be resumed; it exits 2 for a `RUNNING` job or a record with
+no session id. Cursor was verified to resume a session killed mid-tool. Answer `NEEDS_CONTEXT`
+with it.
 
 `--tool-idle-ms` widens how long a running tool may stay silent before the idle watchdog
 kills the job (default 1800000, 30 min; a model silent between tools gets 300000). It also
@@ -66,7 +68,10 @@ bounds the gate.
 ## Waiting
 
 `watch` blocks until every listed job is terminal, then prints their records on stdout. It is
-the only way to wait; run it in the background the way your harness's instructions say.
+the only way to wait; run it in the background the way your harness's instructions say. On
+timeout, it prints the still-RUNNING records, exits 1 and writes one stderr line per job. The
+`progress` field holds the partial state: phase, last tool, last assistant text, files touched,
+tokens, elapsed time and session id. Run `watch` again to keep waiting.
 
 ```bash
 delegate watch <id-a> <id-b> --timeout 1800

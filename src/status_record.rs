@@ -2,6 +2,7 @@ use crate::types::PollResult;
 use crate::util::{json_compact, random_uuid};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 pub trait StatusRecordWriter: Send + Sync {
     fn write(&self, job_id: &str, record: &PollResult);
@@ -42,6 +43,7 @@ pub fn file_status_record_writer() -> FileStatusRecordWriter {
 #[serde(rename_all = "camelCase")]
 pub struct CliResume {
     pub model: String,
+    pub backend: Option<String>,
     pub cwd: String,
     pub session_id: Option<String>,
     pub gate: String,
@@ -69,25 +71,41 @@ pub struct CliRecord {
 pub struct CliRecordWriter {
     pub job_id: String,
     pub model: String,
+    pub backend: Option<String>,
     pub cwd: String,
     pub gate: String,
     pub tool_idle_ms: Option<f64>,
     pub resumed_from: Option<String>,
+    pub last_session_id: Mutex<Option<String>>,
 }
 
 impl StatusRecordWriter for CliRecordWriter {
     fn write(&self, _registry_id: &str, record: &PollResult) {
         let mut poll = record.clone();
-        let mut session_id = None;
         if let PollResult::Terminal { result, .. } = &mut poll {
             result.job_id = Some(self.job_id.clone());
-            session_id = result.session_id.clone();
         }
+        let current_session_id = match &poll {
+            PollResult::Running { progress, .. } => progress.session_id.clone(),
+            PollResult::Terminal { result, .. } => result.session_id.clone(),
+            PollResult::NotFound { .. } => None,
+        };
+        let session_id = {
+            let mut last = self
+                .last_session_id
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if current_session_id.is_some() {
+                *last = current_session_id;
+            }
+            last.clone()
+        };
         let rec = CliRecord {
             poll,
             supervisor_pid: std::process::id(),
             resume: CliResume {
                 model: self.model.clone(),
+                backend: self.backend.clone(),
                 cwd: self.cwd.clone(),
                 session_id,
                 gate: self.gate.clone(),
@@ -121,7 +139,7 @@ pub fn write_supervisor_died(job_id: &str, prior: &serde_json::Value) -> std::io
             "status": "ERROR",
             "text": "supervisor died",
             "sessionId": resume["sessionId"].clone(),
-            "backend": "cursor",
+            "backend": resume["backend"].clone(),
             "model": resume["model"].as_str().unwrap_or(""),
             "usage": null,
             "costUsd": null,
@@ -140,10 +158,12 @@ pub fn write_cancelled(job_id: &str, prior: &serde_json::Value) -> std::io::Resu
     let Some(obj) = rec.as_object_mut() else {
         return Err(std::io::Error::other("status record is not an object"));
     };
-    let model = obj
-        .get("resume")
-        .and_then(|r| r.get("model"))
-        .and_then(|m| m.as_str())
+    let resume = &prior["resume"];
+    let session_id = resume["sessionId"].clone();
+    let backend = resume["backend"].clone();
+    let model = resume
+        .get("model")
+        .and_then(serde_json::Value::as_str)
         .unwrap_or("")
         .to_string();
     obj.insert("status".into(), "CANCELLED".into());
@@ -154,8 +174,8 @@ pub fn write_cancelled(job_id: &str, prior: &serde_json::Value) -> std::io::Resu
         serde_json::json!({
             "status": "CANCELLED",
             "text": "Cancelled by user.",
-            "sessionId": null,
-            "backend": "cursor",
+            "sessionId": session_id,
+            "backend": backend,
             "model": model,
             "usage": null,
             "costUsd": null,
@@ -164,8 +184,52 @@ pub fn write_cancelled(job_id: &str, prior: &serde_json::Value) -> std::io::Resu
             "jobId": job_id,
         }),
     );
-    if let Some(resume) = obj.get_mut("resume").and_then(|r| r.as_object_mut()) {
-        resume.insert("sessionId".into(), serde_json::Value::Null);
-    }
     write_atomic(&job_record_path(job_id), &json_compact(&rec))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn written_record(id: &str) -> serde_json::Value {
+        serde_json::from_str(&fs::read_to_string(job_record_path(id)).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn fallback_writers_preserve_the_session_and_configured_backend() {
+        let prior = json!({
+            "status": "RUNNING",
+            "resume": {"model": "model", "backend": "pi", "sessionId": "s-init"}
+        });
+        let cancelled_id = random_uuid();
+        write_cancelled(&cancelled_id, &prior).unwrap();
+        let cancelled = written_record(&cancelled_id);
+        assert_eq!(cancelled["resume"]["sessionId"], "s-init");
+        assert_eq!(cancelled["result"]["sessionId"], "s-init");
+        assert_eq!(cancelled["result"]["backend"], "pi");
+        let _ = fs::remove_file(job_record_path(&cancelled_id));
+
+        let dead_id = random_uuid();
+        write_supervisor_died(&dead_id, &prior).unwrap();
+        let dead = written_record(&dead_id);
+        assert_eq!(dead["resume"]["sessionId"], "s-init");
+        assert_eq!(dead["result"]["sessionId"], "s-init");
+        assert_eq!(dead["result"]["backend"], "pi");
+        let _ = fs::remove_file(job_record_path(&dead_id));
+    }
+
+    #[test]
+    fn supervisor_fallback_does_not_guess_missing_backend_or_session() {
+        let id = random_uuid();
+        let prior = json!({
+            "status": "RUNNING",
+            "resume": {"model": "old-model", "sessionId": null}
+        });
+        write_supervisor_died(&id, &prior).unwrap();
+        let dead = written_record(&id);
+        assert!(dead["result"]["backend"].is_null());
+        assert!(dead["result"]["sessionId"].is_null());
+        let _ = fs::remove_file(job_record_path(&id));
+    }
 }

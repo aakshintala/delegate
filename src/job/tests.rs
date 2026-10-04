@@ -60,6 +60,14 @@ impl FakeHandle {
             last_assistant: assistant.map(Into::into),
             files_touched: files.iter().map(|f| f.to_string()).collect(),
             phase: phase.map(Into::into),
+            session_id: None,
+        };
+        let _ = self.tx.lock().unwrap().send(Msg::Ev(Event::Progress(snap)));
+    }
+    pub fn session_id(&self, id: &str) {
+        let snap = ProgressSnapshotRaw {
+            session_id: Some(id.into()),
+            ..Default::default()
         };
         let _ = self.tx.lock().unwrap().send(Msg::Ev(Event::Progress(snap)));
     }
@@ -90,7 +98,12 @@ impl FakeBackend {
 }
 
 impl Runner for FakeBackend {
-    fn run(&self, _spec: &JobSpec) -> Spawned {
+    fn run(&self, spec: &JobSpec) -> Spawned {
+        let session_id = spec
+            .argv
+            .windows(2)
+            .find(|w| w[0] == "--session-id")
+            .map(|w| w[1].clone());
         let (tx, rx) = mpsc::channel();
         if let Some(r) = &*self.auto.lock().unwrap() {
             tx.send(Msg::Finish(r.clone())).unwrap();
@@ -103,6 +116,7 @@ impl Runner for FakeBackend {
         self.handles.lock().unwrap().push(h);
         let tx = Mutex::new(tx);
         Spawned {
+            session_id,
             kill: Box::new(move || {
                 killed.lock().unwrap().push("SIGTERM");
                 let _ = tx
@@ -257,6 +271,39 @@ fn dispatch_persists_start_and_terminal_records() {
     assert_eq!(settle(&s.reg, &id), "DONE");
     assert_eq!(s.spy.len(), 2);
     assert_eq!(status_of(&s.spy.nth(1).1), "DONE");
+}
+
+#[test]
+fn dispatch_seeds_running_progress_with_the_launched_session_id() {
+    let s = setup();
+    let id = s.reg.dispatch(spec_of(|spec| {
+        spec.argv = vec!["--session-id".into(), "launch-sid".into()];
+    }));
+    let (recorded_id, record) = s.spy.nth(0);
+    assert_eq!(recorded_id, id);
+    assert_eq!(record["status"], "RUNNING");
+    assert_eq!(record["progress"]["sessionId"], "launch-sid");
+}
+
+#[test]
+fn session_id_progress_is_written_without_waiting_for_the_heartbeat() {
+    let s = setup();
+    let id = s.reg.dispatch(spec_of(|_| {}));
+    s.fake.handle(0).session_id("s-init");
+    for _ in 0..500 {
+        if s.spy.len() > 1 {
+            break;
+        }
+        sleep(Duration::from_millis(2));
+    }
+    assert_eq!(s.spy.len(), 2);
+    let record = s.spy.last().1;
+    assert_eq!(record["status"], "RUNNING");
+    assert_eq!(record["progress"]["sessionId"], "s-init");
+    assert_eq!(serde_json::to_value(s.reg.poll(&id)).unwrap()["progress"]["sessionId"], "s-init");
+    s.fake.handle(0).session_id("s-init");
+    sleep(Duration::from_millis(30));
+    assert_eq!(s.spy.len(), 2);
 }
 
 #[test]

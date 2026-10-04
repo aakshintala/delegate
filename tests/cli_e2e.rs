@@ -17,6 +17,7 @@ case "$*" in
     sleep 300 &
     echo $! > "$(dirname "$0")/grandchild.pid"
     echo $$ > "$(dirname "$0")/agent.pid"
+    printf '%s\n' '{"type":"system","subtype":"init","session_id":"s-init"}'
     i=0
     while [ ! -e "$rel" ] && [ "$i" -lt 400 ]; do sleep 0.05; i=$((i+1)); done
     printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"late\nSTATUS: DONE","session_id":"s-9"}'
@@ -30,6 +31,9 @@ case "$*" in
     while [ ! -e "$rel" ] && [ "$i" -lt 400 ]; do sleep 0.05; i=$((i+1)); done
     exit 0
     ;;
+esac
+case "$*" in
+  *SLOW*) printf '%s\n' '{"type":"system","subtype":"init","session_id":"s-init"}' ;;
 esac
 printf '%s\n' '{"type":"tool_call","subtype":"started","tool_call":{"shellToolCall":{"args":{"command":"ls"}}}}'
 case "$*" in
@@ -263,6 +267,26 @@ fn watch_prints_all_in_order_and_times_out_with_exit_1() {
         .collect();
     assert_eq!(lines.len(), 2);
     assert_eq!(lines[0]["status"], "RUNNING");
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    let errors: Vec<&str> = stderr.lines().collect();
+    let expected_ids: Vec<&String> = [(&slow, &lines[0]), (&fast, &lines[1])]
+        .into_iter()
+        .filter(|(_, record)| record["status"] == "RUNNING")
+        .map(|(id, _)| id)
+        .collect();
+    assert_eq!(errors.len(), expected_ids.len(), "{stderr:?}");
+    for (error, id) in errors.iter().zip(expected_ids) {
+        assert!(
+            error.starts_with(&format!(
+                "delegate watch: timed out after 1s; {id} still RUNNING"
+            )),
+            "{error:?}"
+        );
+        assert!(
+            error.contains("see its progress field; run watch again"),
+            "{error:?}"
+        );
+    }
 
     e.release();
     let out = e.delegate(&["watch", &fast, &slow, "--timeout", "10"], None);
@@ -586,11 +610,15 @@ fn capability_flag_is_an_unknown_flag_error() {
 fn watch_reports_dead_supervisor() {
     let e = Env::new("dead-sup");
     let id = e.run("SLOW");
+    until("cursor init session id", || {
+        e.record(&id)["resume"]["sessionId"] == "s-init"
+    });
     let pid = e.record(&id)["supervisorPid"].as_i64().unwrap();
     unsafe { libc::kill(pid as i32, libc::SIGKILL) };
     let done = e.wait_terminal(&id);
     assert_eq!(done["status"], "ERROR");
     assert_eq!(done["result"]["text"], "supervisor died");
+    assert_eq!(done["result"]["sessionId"], "s-init");
     assert_eq!(e.record(&id)["status"], "ERROR");
     assert_eq!(e.record(&id)["result"]["text"], "supervisor died");
     e.release();
@@ -739,8 +767,8 @@ fn resume_unknown_no_session_and_empty_prompt_exit_2() {
         String::from_utf8_lossy(&out.stderr)
     );
 
-    // A record with no session id (cancelled before any result) is not resumable.
-    let slow = e.run("SLOW");
+    // A record with no session id is not resumable.
+    let slow = e.run("SILENT");
     let cancelled = e.delegate(&["cancel", &slow], None);
     assert_eq!(cancelled.status.code(), Some(0));
     assert_eq!(e.record(&slow)["status"], "CANCELLED");
@@ -766,7 +794,12 @@ fn cancel_kills_agent_and_grandchild() {
     let e = Env::new("cancel");
     let id = e.run("CANCELME");
     e.until_agent_spawned(&id);
+    until("cursor init session id", || {
+        e.record(&id)["resume"]["sessionId"] == "s-init"
+    });
     assert_eq!(e.record(&id)["status"], "RUNNING");
+    assert_eq!(e.record(&id)["resume"]["sessionId"], "s-init");
+    assert_eq!(e.record(&id)["resume"]["backend"], "cursor");
     let agent = read_pid(&e.dir, "agent.pid");
     let grand = read_pid(&e.dir, "grandchild.pid");
     assert!(alive(agent) && alive(grand), "agent {agent} grand {grand}");
@@ -782,8 +815,27 @@ fn cancel_kills_agent_and_grandchild() {
     assert_eq!(final_rec["status"], "CANCELLED");
     assert_eq!(final_rec["result"]["status"], "CANCELLED");
     assert_eq!(final_rec["result"]["jobId"], id.as_str());
+    assert_eq!(final_rec["result"]["sessionId"], "s-init");
+    assert_eq!(final_rec["resume"]["sessionId"], "s-init");
     until("agent death", || !alive(agent) && !alive(grand));
     assert_eq!(e.record(&id)["status"], "CANCELLED");
+    let resumed = e.resume(&id, &[], Some("continue"));
+    assert_eq!(
+        resumed.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&resumed.stderr)
+    );
+    let resumed_id = String::from_utf8(resumed.stdout)
+        .unwrap()
+        .trim()
+        .to_string();
+    assert_eq!(e.wait_terminal(&resumed_id)["status"], "DONE");
+    let argv = e.argv();
+    assert!(
+        argv.windows(2).any(|w| w == ["--resume", "s-init"]),
+        "{argv:?}"
+    );
 }
 
 #[test]
@@ -791,6 +843,9 @@ fn cancel_sigkill_fallback_after_stopped_supervisor() {
     let e = Env::new("cancel-kill");
     let id = e.run("CANCELME");
     e.until_agent_spawned(&id);
+    until("cursor init session id", || {
+        e.record(&id)["resume"]["sessionId"] == "s-init"
+    });
     assert_eq!(e.record(&id)["status"], "RUNNING");
     let sup = e.record(&id)["supervisorPid"].as_i64().unwrap() as i32;
     let agent = read_pid(&e.dir, "agent.pid");
@@ -809,6 +864,9 @@ fn cancel_sigkill_fallback_after_stopped_supervisor() {
     let final_rec: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(final_rec["status"], "CANCELLED");
     assert_eq!(final_rec["result"]["status"], "CANCELLED");
+    assert_eq!(final_rec["result"]["sessionId"], "s-init");
+    assert_eq!(final_rec["resume"]["sessionId"], "s-init");
+    assert_eq!(final_rec["result"]["backend"], "cursor");
     // The full 5s SIGTERM wait elapsed: the fast supervisor path could not have fired.
     assert!(start.elapsed() >= Duration::from_secs(5));
     until("agent death", || !alive(agent) && !alive(grand));

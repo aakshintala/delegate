@@ -134,6 +134,7 @@ fn poll_state(st: &Inner, job_id: &str) -> PollResult {
                 last_assistant: p.last_assistant.clone(),
                 files_touched_so_far: p.files_touched.clone(),
                 phase: p.phase.clone(),
+                session_id: p.session_id.clone(),
             },
         };
     }
@@ -171,6 +172,7 @@ impl JobHandle {
             let mut st = self.lock();
             let spawned = self.deps.backend.run(&spec);
             drive = spawned.drive;
+            let session_id = spawned.session_id;
             let now = Instant::now();
             st.job = Some((
                 job_id.clone(),
@@ -181,7 +183,10 @@ impl JobHandle {
                     kill: Arc::from(spawned.kill),
                     finalize_abort: Arc::new(AtomicBool::new(false)),
                     started: now,
-                    progress: ProgressSnapshotRaw::default(),
+                    progress: ProgressSnapshotRaw {
+                        session_id,
+                        ..Default::default()
+                    },
                     last_event: now,
                     termination: None,
                     output: None,
@@ -210,9 +215,19 @@ impl JobHandle {
             return;
         }
         job.last_event = Instant::now();
-        if let Event::Progress(snap) = e {
+        if let Event::Progress(mut snap) = e {
+            let session_changed = snap
+                .session_id
+                .as_ref()
+                .is_some_and(|id| job.progress.session_id.as_ref() != Some(id));
+            if snap.session_id.is_none() {
+                snap.session_id = job.progress.session_id.clone();
+            }
             job.progress = snap;
             self.cv.notify_all();
+            if session_changed {
+                self.write_record(&st, job_id);
+            }
         }
     }
 

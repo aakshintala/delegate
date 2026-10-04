@@ -78,8 +78,10 @@ pub(crate) fn spawn(spec: &JobSpec) -> Spawned {
     let stdout = started.stdout;
     let stderr = started.stderr;
     let mut child = started.child;
+    let spawned_session = launched_session.clone();
     Spawned {
         kill: super::killer(pid, reaped_k),
+        session_id: spawned_session,
         drive: Box::new(move |on| {
             let mut state = PiState::default();
             let pumped = super::pump(
@@ -99,6 +101,10 @@ pub(crate) fn spawn(spec: &JobSpec) -> Spawned {
                             last_assistant: state.last_assistant.clone(),
                             files_touched: Vec::new(),
                             phase: state.phase.clone(),
+                            session_id: state
+                                .session_id
+                                .clone()
+                                .or_else(|| launched_session.clone()),
                         }));
                     }
                 },
@@ -164,9 +170,12 @@ fn handle_line(line: &[u8], state: &mut PiState) -> bool {
     match ev.get("type").and_then(|t| t.as_str()) {
         Some("session") => {
             if let Some(id) = ev.get("id").and_then(|i| i.as_str()) {
+                let changed = state.session_id.as_deref() != Some(id);
                 state.session_id = Some(id.to_string());
+                changed
+            } else {
+                false
             }
-            false
         }
         Some("tool_execution_start") => {
             if let Some(tool) = ev.get("toolName").and_then(|t| t.as_str()) {
@@ -342,6 +351,16 @@ mod tests {
             Some(v) => unsafe { std::env::set_var("PI_BIN", v) },
             None => unsafe { std::env::remove_var("PI_BIN") },
         }
+    }
+
+    #[test]
+    fn session_header_emits_the_stream_session_id_as_progress() {
+        let mut state = PiState::default();
+        assert!(handle_line(
+            br#"{"type":"session","id":"stream-sid"}"#,
+            &mut state
+        ));
+        assert_eq!(state.session_id.as_deref(), Some("stream-sid"));
     }
 
     #[test]

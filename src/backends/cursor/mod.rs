@@ -58,7 +58,12 @@ pub(crate) fn argv(model: &str, session: Option<&str>, prompt: &str) -> Vec<Stri
 }
 
 pub(crate) fn spawn(spec: &JobSpec) -> Spawned {
-    spawn_with_session(spec, None)
+    let launched_session = spec
+        .argv
+        .windows(2)
+        .find(|w| w[0] == "--resume")
+        .map(|w| w[1].clone());
+    spawn_with_session(spec, launched_session)
 }
 
 /// `launched_session` is an id chosen before launch. The stream's own id wins;
@@ -74,8 +79,10 @@ pub(crate) fn spawn_with_session(spec: &JobSpec, launched_session: Option<String
     let stdout = started.stdout;
     let stderr = started.stderr;
     let mut child = started.child;
+    let spawned_session = launched_session.clone();
     Spawned {
         kill: super::killer(pid, reaped_k),
+        session_id: spawned_session,
         drive: Box::new(move |on| {
             let mut state = init_stream_state();
             let mut result: Option<RawCursorJson> = None;
@@ -97,6 +104,7 @@ pub(crate) fn spawn_with_session(spec: &JobSpec, launched_session: Option<String
                 pumped.clean_exit,
                 &pumped.stderr,
                 !pumped.saw_stdout,
+                state.session_id.as_deref(),
                 launched_session.as_deref(),
             )
         }),
@@ -117,7 +125,15 @@ pub fn parse_stdout(stdout: &str, clean_exit: bool, stderr: &str) -> BackendResu
             &|_: Event| {},
         );
     }
-    finish(raw, &messages, clean_exit, stderr, stdout.is_empty(), None)
+    finish(
+        raw,
+        &messages,
+        clean_exit,
+        stderr,
+        stdout.is_empty(),
+        state.session_id.as_deref(),
+        None,
+    )
 }
 
 fn handle_line(
@@ -141,6 +157,7 @@ fn handle_line(
             last_assistant: state.last_assistant.clone(),
             files_touched: state.files_touched.clone(),
             phase: state.phase.clone(),
+            session_id: state.session_id.clone(),
         }));
     }
 }
@@ -174,14 +191,16 @@ fn finish(
     clean_exit: bool,
     stderr: &str,
     stdout_empty: bool,
+    stream_session: Option<&str>,
     launched_session: Option<&str>,
 ) -> BackendResult {
+    let session = || stream_session.map(str::to_string);
     let launched = || launched_session.map(str::to_string);
     if let Some(raw) = raw {
         let result = raw.result.unwrap_or_default();
         return BackendResult {
             text: text_from_result_and_messages(&result, messages),
-            session_id: raw.session_id.or_else(launched),
+            session_id: raw.session_id.or_else(session).or_else(launched),
             usage: raw.usage,
             cost_usd: raw.cost_usd,
             is_error: raw.is_error,
@@ -201,7 +220,7 @@ fn finish(
     };
     BackendResult {
         text,
-        session_id: launched(),
+        session_id: session().or_else(launched),
         is_error: Some(true),
         clean_exit,
         stderr: stderr.to_string(),
@@ -234,6 +253,7 @@ mod tests {
             pumped.clean_exit,
             &pumped.stderr,
             !pumped.saw_stdout,
+            state.session_id.as_deref(),
             None,
         )
     }
@@ -382,7 +402,30 @@ mod tests {
 
     /// Exit status is not stored in the fixtures. Everything else is a clean exit.
     fn clean_exit_for(stem: &str) -> bool {
-        !matches!(stem, "error-bad-model" | "cancelled")
+        !matches!(stem, "error-bad-model" | "cancelled" | "cancel-mid-tool")
+    }
+
+    #[test]
+    fn result_session_id_is_authoritative_over_the_stream_id() {
+        let stdout = concat!(
+            r#"{"type":"system","subtype":"init","session_id":"stream-sid"}"#,
+            "\n",
+            r#"{"type":"result","is_error":false,"result":"ok","session_id":"result-sid"}"#,
+        );
+        let res = parse_stdout(stdout, true, "");
+        assert_eq!(res.session_id.as_deref(), Some("result-sid"));
+    }
+
+    #[test]
+    fn cancelled_mid_tool_keeps_its_stream_session_id() {
+        let stdout = include_str!("../../../tests/fixtures/contract/cursor/cancel-mid-tool.stdout");
+        let res = parse_stdout(stdout, false, "");
+        assert_eq!(
+            res.session_id.as_deref(),
+            Some("2a2056ae-a4c8-48ba-aaf1-e493a08074a5")
+        );
+        assert_eq!(res.is_error, Some(true));
+        assert!(!res.clean_exit);
     }
 
     #[test]
@@ -416,7 +459,17 @@ mod tests {
             } else if !clean {
                 assert_eq!(res.is_error, Some(true), "{stem}");
                 assert_eq!(res.text, NO_RESULT, "{stem}");
-                assert!(res.session_id.is_none() && res.usage.is_none(), "{stem}");
+                if stem == "cancel-mid-tool" || stem == "cancelled" {
+                    let expected = if stem == "cancel-mid-tool" {
+                        "2a2056ae-a4c8-48ba-aaf1-e493a08074a5"
+                    } else {
+                        "62115336-178d-43d1-a45b-b83b5f597c2e"
+                    };
+                    assert_eq!(res.session_id.as_deref(), Some(expected), "{stem}");
+                    assert!(res.usage.is_none(), "{stem}");
+                } else {
+                    assert!(res.session_id.is_none() && res.usage.is_none(), "{stem}");
+                }
             } else {
                 assert_eq!(res.is_error, Some(false), "{stem}");
                 assert!(res.session_id.is_some() && res.usage.is_some(), "{stem}");
@@ -453,6 +506,14 @@ mod tests {
                         "tool-calls-fix progress saw no tool call"
                     );
                 }
+                "cancel-mid-tool-resume" => {
+                    assert_eq!(res.text, "BANANA\n\nSTATUS: DONE", "{stem}");
+                    assert_eq!(
+                        res.session_id.as_deref(),
+                        Some("2a2056ae-a4c8-48ba-aaf1-e493a08074a5"),
+                        "{stem}"
+                    );
+                }
                 "resume-answer" => {
                     assert_eq!(res.text, "392\n\nSTATUS: DONE", "{stem}");
                     assert_eq!(
@@ -469,7 +530,22 @@ mod tests {
                         "{stem}"
                     );
                 }
-                "cancelled" => assert_eq!(res.text, NO_RESULT, "{stem}"),
+                "cancel-mid-tool" => {
+                    assert_eq!(res.text, NO_RESULT, "{stem}");
+                    assert_eq!(
+                        res.session_id.as_deref(),
+                        Some("2a2056ae-a4c8-48ba-aaf1-e493a08074a5"),
+                        "{stem}"
+                    );
+                }
+                "cancelled" => {
+                    assert_eq!(res.text, NO_RESULT, "{stem}");
+                    assert_eq!(
+                        res.session_id.as_deref(),
+                        Some("62115336-178d-43d1-a45b-b83b5f597c2e"),
+                        "{stem}"
+                    );
+                }
                 // Empty stdout: the text is the stderr we kept.
                 "error-bad-model" => assert_eq!(res.text, stderr, "{stem}"),
                 "glued-messages" => {

@@ -159,7 +159,12 @@ mod tests {
             if stem == "cancelled" {
                 assert_eq!(res.is_error, Some(true), "{stem}");
                 assert_eq!(res.text, "no result line", "{stem}");
-                assert!(res.session_id.is_none() && res.usage.is_none(), "{stem}");
+                assert_eq!(
+                    res.session_id.as_deref(),
+                    Some("96fc5446-dc3e-4ffa-b3bf-fad8fad2bbe0"),
+                    "{stem}"
+                );
+                assert!(res.usage.is_none(), "{stem}");
                 continue;
             }
 

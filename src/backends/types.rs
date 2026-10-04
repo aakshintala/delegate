@@ -24,6 +24,7 @@ pub struct ProgressSnapshotRaw {
     pub last_assistant: Option<String>,
     pub files_touched: Vec<String>,
     pub phase: Option<String>,
+    pub session_id: Option<String>,
 }
 
 /// Liveness and progress signals from a running child. `Activity` fires on any raw stdout
@@ -42,6 +43,7 @@ pub type EventFn<'a> = &'a (dyn Fn(Event) + Sync);
 /// times. `drive` blocks the calling thread until the child exits, reporting events.
 pub struct Spawned {
     pub kill: Box<dyn Fn() + Send + Sync>,
+    pub session_id: Option<String>,
     pub drive: Box<dyn FnOnce(EventFn<'_>) -> BackendResult + Send>,
 }
 

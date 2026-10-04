@@ -147,6 +147,7 @@ pub(crate) fn spawn_failed(msg: &str) -> Spawned {
     let msg = msg.to_string();
     Spawned {
         kill: Box::new(|| {}),
+        session_id: None,
         drive: Box::new(move |_| BackendResult {
             text: msg.clone(),
             is_error: Some(true),

@@ -327,6 +327,7 @@ pub struct ProgressSnapshot {
     pub last_assistant: Option<String>,
     pub files_touched_so_far: Vec<String>,
     pub phase: Option<String>,
+    pub session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
